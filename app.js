@@ -253,6 +253,43 @@ async function shareholderMeetings() {
   } catch { return []; }
 }
 
+/* ===== 當日分時資料 ===== */
+async function taiexIntraday() {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}`;
+  try {
+    const r = await fetch(PROXY(`https://www.twse.com.tw/exchangeReport/MI_5MINS_INDEX?response=json&date=${dateStr}`));
+    const j = await r.json();
+    if (j.stat !== "OK" || !j.data || !j.data.length) return [];
+    const pts = [];
+    for (let i = 0; i < j.data.length; i += 12) {
+      const row = j.data[i];
+      const t = row[0];
+      const p = parseFloat(row[1].replace(/,/g, ""));
+      if (!isNaN(p)) pts.push({ t, p, v: 0 });
+    }
+    const last = j.data[j.data.length - 1];
+    if (last && pts.length && pts[pts.length - 1].t !== last[0]) {
+      const p = parseFloat(last[1].replace(/,/g, ""));
+      if (!isNaN(p)) pts.push({ t: last[0], p, v: 0 });
+    }
+    return pts;
+  } catch { return []; }
+}
+
+async function stockIntraday(sid) {
+  try {
+    const quotes = await misRealtime([sid]);
+    const q = quotes[sid] || quotes[sid.toUpperCase()] || {};
+    const pts = [];
+    const o = parseFloat(q.open), z = parseFloat(q.price) || o;
+    const t = q.time || "13:30:00";
+    if (o && !isNaN(o)) pts.push({ t: "09:00:00", p: o, v: 0 });
+    if (z && !isNaN(z) && pts.length && t !== "09:00:00") pts.push({ t, p: z, v: parseInt(q.volume) || 0 });
+    return pts;
+  } catch { return []; }
+}
+
 /* ===== 庫存計算 ===== */
 function computePortfolio(pf, quotes) {
   let totalCost = 0, totalValue = 0;
@@ -563,7 +600,11 @@ const api = async (path, opt) => {
   }
 
   const stockIntraMatch = path.match(/^\/api\/stock\/([^/]+)\/intraday$/);
-  if (stockIntraMatch) return { date: localDateISO(), points: [] };
+  if (stockIntraMatch) {
+    const sid = stockIntraMatch[1].toUpperCase();
+    const pts = sid === "T00" ? await taiexIntraday() : await stockIntraday(sid);
+    return { date: localDateISO(), points: pts };
+  }
 
   const stockChipsMatch = path.match(/^\/api\/stock\/([^/]+)\/chips/);
   if (stockChipsMatch) {
