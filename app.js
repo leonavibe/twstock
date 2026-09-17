@@ -232,15 +232,24 @@ async function institutional() {
 
 /* ===== 股東會 ===== */
 async function shareholderMeetings() {
-  const year = new Date().getFullYear() - 1911;
   try {
-    const r = await fetch(PROXY(`${TWSE_WEB}/rwd/zh/company/shareholdMeeting?year=${year}&response=json`));
-    const j = await r.json();
-    if (!j.data) return [];
-    return j.data.map(d => ({
-      stock_id: d[1], name: d[2], date: `${parseInt(d[3]?.split("/")[0] || 0) + 1911}-${(d[3] || "").split("/").slice(1).join("-")}`,
-      label: d[4] || "股東會", time: d[5] || "", location: d[6] || "", market: "上市",
-    }));
+    const r = await fetch(PROXY("https://openapi.twse.com.tw/v1/opendata/t187ap41_L"));
+    const raw = await r.json();
+    if (!Array.isArray(raw)) return [];
+    return raw.map(d => {
+      const rd = d["開會日期"] || "";
+      const yy = parseInt(rd.slice(0, 3)) || 0, mm = rd.slice(3, 5), dd = rd.slice(5, 7);
+      const iso = yy ? `${yy + 1911}-${mm}-${dd}` : "";
+      return {
+        stock_id: (d["公司代號"] || "").trim(),
+        name: (d["公司名稱"] || "").trim(),
+        date: iso,
+        label: (d["股東常(臨時)會"] || "股東會").trim(),
+        time: "", location: (d["開會地點"] || "").trim(),
+        electronic_voting: d["是否採電子投票"] || "",
+        market: "上市",
+      };
+    }).filter(d => d.stock_id && d.date);
   } catch { return []; }
 }
 
