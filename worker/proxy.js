@@ -16,6 +16,7 @@ const ALLOWED_TARGETS = [
   'https://news.google.com',
   'https://www.moneydj.com',
   'https://opendata.tdcc.com.tw',
+  'https://openapi.twse.com.tw',
 ];
 
 export default {

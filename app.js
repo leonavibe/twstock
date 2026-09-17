@@ -164,27 +164,50 @@ async function fetchNews(query, limit = 20) {
   return items;
 }
 
+/* ===== TWSE 全市場日行情（免費、免金鑰） ===== */
+let _twseAllCache = null, _twseAllTime = 0;
+async function twseAllStocks() {
+  if (_twseAllCache && Date.now() - _twseAllTime < 300000) return _twseAllCache;
+  const url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL";
+  const r = await fetch(PROXY(url));
+  if (!r.ok) throw new Error("TWSE API error");
+  const raw = await r.json();
+  const rows = [];
+  for (const d of raw) {
+    const close = parseFloat(d.ClosingPrice);
+    const change = parseFloat(d.Change);
+    const volume = parseInt(d.TradeVolume) || 0;
+    if (!close || isNaN(close)) continue;
+    const prev = close - change;
+    rows.push({
+      id: d.Code, name: d.Name || "",
+      close, change, pct: prev ? (change / prev) * 100 : 0,
+      volume, market: "上市", time: "",
+    });
+  }
+  _twseAllCache = rows;
+  _twseAllTime = Date.now();
+  return rows;
+}
+
 /* ===== 排行榜 ===== */
 async function rankingsLimits() {
-  return { limit_up: [], limit_down: [] };
+  try {
+    const rows = await twseAllStocks();
+    const up = rows.filter(r => r.pct >= 9.4).sort((a, b) => b.pct - a.pct);
+    const down = rows.filter(r => r.pct <= -9.4).sort((a, b) => a.pct - b.pct);
+    return { limit_up: up.slice(0, 50), limit_down: down.slice(0, 50) };
+  } catch { return { limit_up: [], limit_down: [] }; }
 }
 
 async function rankingsMovers(kind = "gainers", limit = 30) {
-  const start = localDateISO(new Date(Date.now() - 3 * 86400000));
   try {
-    const data = await finmind("TaiwanStockPrice", { start_date: start });
-    const latest = {};
-    for (const d of data) latest[d.stock_id] = d;
-    const arr = Object.values(latest).map(d => ({
-      id: d.stock_id, name: "", close: d.close, change: d.spread || 0,
-      pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0,
-      volume: d.Trading_Volume || 0, market: d.stock_id?.startsWith("00") ? "ETF" : "上市",
-    }));
-    if (kind === "gainers") arr.sort((a, b) => b.pct - a.pct);
-    else if (kind === "losers") arr.sort((a, b) => a.pct - b.pct);
-    else arr.sort((a, b) => b.volume - a.volume);
-    const info = await stockInfo();
-    return arr.slice(0, limit).map(r => ({ ...r, name: info[r.id]?.stock_name || "" }));
+    let rows = await twseAllStocks();
+    rows = rows.filter(r => !r.id.startsWith("00"));
+    if (kind === "gainers") rows.sort((a, b) => b.pct - a.pct);
+    else if (kind === "losers") rows.sort((a, b) => a.pct - b.pct);
+    else rows.sort((a, b) => b.volume - a.volume);
+    return rows.slice(0, limit);
   } catch { return []; }
 }
 
@@ -685,21 +708,7 @@ const api = async (path, opt) => {
     return rankingsMovers(km?.[1] || "gainers", parseInt(lm?.[1] || "30"));
   }
   if (path.startsWith("/api/rankings/trust")) {
-    try {
-      const start = localDateISO(new Date(Date.now() - 15 * 86400000));
-      const data = await finmind("TaiwanStockInstitutionalInvestorsBuySell", { start_date: start });
-      const byStock = {};
-      for (const d of data) {
-        if (!d.name?.includes("投信")) continue;
-        byStock[d.stock_id] = byStock[d.stock_id] || { id: d.stock_id, name: "", days: 0, total: 0 };
-        const net = (d.buy || 0) - (d.sell || 0);
-        if (net > 0) { byStock[d.stock_id].days++; byStock[d.stock_id].total += net; }
-      }
-      const info = await stockInfo().catch(() => ({}));
-      const rows = Object.values(byStock).sort((a, b) => b.days - a.days || b.total - a.total).slice(0, 30)
-        .map(r => ({ ...r, name: info[r.id]?.stock_name || "", streak: r.days, total_lots: r.total }));
-      return { rows };
-    } catch { return { rows: [] }; }
+    return { rows: [], note: "投信連買資料需要 FinMind 付費方案" };
   }
   if (path.startsWith("/api/rankings/etf")) {
     const km = path.match(/kind=(\w+)/);
@@ -707,20 +716,11 @@ const api = async (path, opt) => {
     const kind = km?.[1] || "volume";
     const limit = parseInt(lm?.[1] || "15");
     try {
-      const start = localDateISO(new Date(Date.now() - 3 * 86400000));
-      const data = await finmind("TaiwanStockPrice", { start_date: start });
-      const latest = {};
-      for (const d of data) { if (d.stock_id.startsWith("00")) latest[d.stock_id] = d; }
-      const arr = Object.values(latest).map(d => ({
-        id: d.stock_id, name: "", close: d.close, change: d.spread || 0,
-        pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0,
-        volume: d.Trading_Volume || 0, market: "ETF",
-      }));
+      let arr = (await twseAllStocks()).filter(r => r.id.startsWith("00") && r.id.length >= 4);
       if (kind === "gainers") arr.sort((a, b) => b.pct - a.pct);
       else if (kind === "losers") arr.sort((a, b) => a.pct - b.pct);
       else arr.sort((a, b) => b.volume - a.volume);
-      const info = await stockInfo().catch(() => ({}));
-      return arr.slice(0, limit).map(r => ({ ...r, name: info[r.id]?.stock_name || "" }));
+      return arr.slice(0, limit);
     } catch { return []; }
   }
 
