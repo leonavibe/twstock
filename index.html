@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#eef3f8" />
+<title>TW 盤手｜台股 / ETF 看盤系統</title>
+<link rel="stylesheet" href="style.css" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">TW·<span>盤手</span></div>
+  <input id="q" list="q-list" placeholder="搜尋代號或名稱" aria-label="搜尋股票或 ETF 代號、名稱" autocomplete="off" enterkeyhint="search" />
+  <datalist id="q-list"></datalist>
+  <button class="iconbtn" id="bell" title="通知中心" aria-label="通知中心">🔔<span id="bell-n" class="belln" style="display:none"></span></button>
+  <button class="iconbtn" id="theme" title="切換亮/暗主題" aria-label="切換主題">◐</button>
+</div>
+<nav class="tabbar" id="nav">
+  <button data-page="home" class="on"><i>📊</i>總覽</button>
+  <button data-page="watch"><i>⭐</i>自選</button>
+  <button data-page="stock"><i>📈</i>個股</button>
+  <button data-page="etf"><i>💹</i>ETF</button>
+  <button data-page="calendar"><i>📅</i>股東會</button>
+  <button data-page="rank"><i>🏆</i>排行</button>
+  <button data-page="ai"><i>⚙️</i>設定</button>
+  <button data-page="help"><i>❔</i>說明</button>
+</nav>
+<main id="main"></main>
+<script src="app.js"></script>
+</body>
+</html>
