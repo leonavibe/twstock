@@ -15,7 +15,7 @@ const escUrl = u => /^https?:\/\//i.test(u || "") ? esc(u) : "#";
 const reportArtifactUrl = () => "";
 
 /* ===== CORS Proxy 設定 ===== */
-const WORKER_URL = localStorage.getItem("twpan-worker") || "";
+const WORKER_URL = localStorage.getItem("twpan-worker") || "https://twstock-proxy.miku4ocean.workers.dev";
 const PROXY = url => WORKER_URL ? `${WORKER_URL}?url=${encodeURIComponent(url)}` : url;
 const TWSE_MIS = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp";
 const TAIFEX_MIS = "https://mis.taifex.com.tw/futures/api/getQuoteList";
