@@ -41,7 +41,7 @@ const LS = {
   saveNotifs(n) { this._s("notifications", n); },
   reports() { return this._g("reports", []); },
   saveReports(r) { this._s("reports", r); },
-  settings() { return this._g("settings", { active_provider: "groq", auto_fallback: true, providers: { groq: { api_key: "", model: "llama-3.3-70b-versatile" } } }); },
+  settings() { return this._g("settings", { active_provider: "groq", auto_fallback: true, usd_twd: 32, finmind_token: "", providers: { groq: { api_key: "", model: "llama-3.3-70b-versatile", in_price: 0.59, out_price: 0.79, monthly_budget_twd: 0 } } }); },
   saveSettings(s) { this._s("settings", s); },
   screenerSaved() { return this._g("screener-saved", []); },
   saveScreener(s) { this._s("screener-saved", s); },
@@ -166,10 +166,7 @@ async function fetchNews(query, limit = 20) {
 
 /* ===== 排行榜 ===== */
 async function rankingsLimits() {
-  try {
-    const data = await finmind("TaiwanStockPriceTick");
-    return { limit_up: [], limit_down: [] };
-  } catch { return { limit_up: [], limit_down: [] }; }
+  return { limit_up: [], limit_down: [] };
 }
 
 async function rankingsMovers(kind = "gainers", limit = 30) {
@@ -179,7 +176,9 @@ async function rankingsMovers(kind = "gainers", limit = 30) {
     const latest = {};
     for (const d of data) latest[d.stock_id] = d;
     const arr = Object.values(latest).map(d => ({
-      id: d.stock_id, name: "", close: d.close, pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0, volume: d.Trading_Volume || 0,
+      id: d.stock_id, name: "", close: d.close, change: d.spread || 0,
+      pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0,
+      volume: d.Trading_Volume || 0, market: d.stock_id?.startsWith("00") ? "ETF" : "上市",
     }));
     if (kind === "gainers") arr.sort((a, b) => b.pct - a.pct);
     else if (kind === "losers") arr.sort((a, b) => a.pct - b.pct);
@@ -451,7 +450,14 @@ const api = async (path, opt) => {
     const j = await r.json();
     return { text: j.choices?.[0]?.message?.content || "無回應", provider: settings.active_provider, model: provider.model };
   }
-  if (path === "/api/ai/usage" && method === "GET") return { total_input: 0, total_output: 0, total_cost_ntd: 0, calls: [] };
+  if (path === "/api/ai/usage" && method === "GET") {
+    const s = LS.settings();
+    const providers = {};
+    for (const [k, v] of Object.entries(s.providers || {})) {
+      providers[k] = { in: 0, out: 0, cost_twd: 0, budget_twd: v.monthly_budget_twd || 0, has_key: !!v.api_key, over_budget: false };
+    }
+    return { month: localDateISO().slice(0, 7), total_input: 0, total_output: 0, total_cost_ntd: 0, providers, calls: [] };
+  }
 
   // ===== 設定 =====
   if (path === "/api/settings/llm" && method === "GET") return LS.settings();
@@ -476,7 +482,11 @@ const api = async (path, opt) => {
     saved.push({ id: Date.now().toString(36), ...body });
     LS.saveScreener(saved); return { ok: true };
   }
-  if (path === "/api/screener/run" && method === "POST") return { results: [], note: "靜態版選股器功能有限" };
+  if (path === "/api/screener/run" && method === "POST") return { rows: [], scanned: 0, notes: ["靜態版選股器功能有限"] };
+  const scrDelMatch = path.match(/^\/api\/screener\/saved\/(.+)$/);
+  if (scrDelMatch && method === "DELETE") {
+    LS.saveScreener(LS.screenerSaved().filter(s => s.id !== scrDelMatch[1])); return { ok: true };
+  }
 
   // ===== 市場數據（CORS proxy）=====
   if (path === "/api/market/index") {
@@ -686,8 +696,10 @@ const api = async (path, opt) => {
         if (net > 0) { byStock[d.stock_id].days++; byStock[d.stock_id].total += net; }
       }
       const info = await stockInfo().catch(() => ({}));
-      return Object.values(byStock).sort((a, b) => b.days - a.days || b.total - a.total).slice(0, 30).map(r => ({ ...r, name: info[r.id]?.stock_name || "" }));
-    } catch { return []; }
+      const rows = Object.values(byStock).sort((a, b) => b.days - a.days || b.total - a.total).slice(0, 30)
+        .map(r => ({ ...r, name: info[r.id]?.stock_name || "", streak: r.days, total_lots: r.total }));
+      return { rows };
+    } catch { return { rows: [] }; }
   }
   if (path.startsWith("/api/rankings/etf")) {
     const km = path.match(/kind=(\w+)/);
@@ -700,7 +712,9 @@ const api = async (path, opt) => {
       const latest = {};
       for (const d of data) { if (d.stock_id.startsWith("00")) latest[d.stock_id] = d; }
       const arr = Object.values(latest).map(d => ({
-        id: d.stock_id, name: "", close: d.close, pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0, volume: d.Trading_Volume || 0,
+        id: d.stock_id, name: "", close: d.close, change: d.spread || 0,
+        pct: d.spread && d.close ? (d.spread / (d.close - d.spread)) * 100 : 0,
+        volume: d.Trading_Volume || 0, market: "ETF",
       }));
       if (kind === "gainers") arr.sort((a, b) => b.pct - a.pct);
       else if (kind === "losers") arr.sort((a, b) => a.pct - b.pct);
