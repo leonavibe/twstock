@@ -277,17 +277,64 @@ async function taiexIntraday() {
   } catch { return []; }
 }
 
+/* ===== 瀏覽器端分時累積器（模擬本機版 scheduler） ===== */
+const _intradayStore = {};
+let _intradayTimer = null;
+let _intradaySymbols = new Set();
+
+function intradayAddSymbol(sid) { _intradaySymbols.add(sid.toUpperCase()); }
+function intradayGet(sid) { return _intradayStore[sid.toUpperCase()] || []; }
+
+async function _intradayPoll() {
+  if (!_intradaySymbols.size) return;
+  const sids = [..._intradaySymbols];
+  try {
+    const quotes = await misRealtime(sids);
+    for (const sid of sids) {
+      const q = quotes[sid] || quotes[sid.toUpperCase()];
+      if (!q) continue;
+      const px = parseFloat(q.price);
+      if (!px || isNaN(px)) continue;
+      const t = q.time || "";
+      if (!t) continue;
+      const key = sid.toUpperCase();
+      if (!_intradayStore[key]) _intradayStore[key] = [];
+      const pts = _intradayStore[key];
+      if (!pts.length || pts[pts.length - 1].t !== t) {
+        pts.push({ t, p: px, v: parseInt(q.volume) || 0 });
+        if (pts.length > 500) pts.splice(0, pts.length - 500);
+      }
+    }
+  } catch {}
+}
+
+function intradayStart() {
+  if (_intradayTimer) return;
+  _intradayPoll();
+  _intradayTimer = setInterval(_intradayPoll, 15000);
+}
+
 async function stockIntraday(sid) {
+  sid = sid.toUpperCase();
+  intradayAddSymbol(sid);
+  intradayStart();
+  let pts = intradayGet(sid);
+  if (pts.length >= 2) return pts;
   try {
     const quotes = await misRealtime([sid]);
     const q = quotes[sid] || quotes[sid.toUpperCase()] || {};
-    const pts = [];
     const o = parseFloat(q.open), z = parseFloat(q.price) || o;
     const t = q.time || "13:30:00";
-    if (o && !isNaN(o)) pts.push({ t: "09:00:00", p: o, v: 0 });
-    if (z && !isNaN(z) && pts.length && t !== "09:00:00") pts.push({ t, p: z, v: parseInt(q.volume) || 0 });
-    return pts;
-  } catch { return []; }
+    const result = [];
+    if (o && !isNaN(o)) result.push({ t: "09:00:00", p: o, v: 0 });
+    if (z && !isNaN(z) && t !== "09:00:00") result.push({ t, p: z, v: parseInt(q.volume) || 0 });
+    if (!_intradayStore[sid]) _intradayStore[sid] = [];
+    for (const pt of result) {
+      const existing = _intradayStore[sid];
+      if (!existing.length || existing[existing.length - 1].t !== pt.t) existing.push(pt);
+    }
+    return _intradayStore[sid].length >= 2 ? _intradayStore[sid] : result;
+  } catch { return pts; }
 }
 
 /* ===== 庫存計算 ===== */
@@ -1548,6 +1595,7 @@ pages.home = async (_arg, gen) => {
         <span class="muted small">可在「設定」開啟收盤後自動產生</span></div></div>
     </div>`;
 
+  intradayAddSymbol("T00"); intradayStart();
   renderMarketIndex(gen, "#home-idx-chart", "#home-idx-tip", "#home-idx-float", "#home-idx-ranges");
   renderInstitutional("#home-inst", gen, "all");
 
@@ -1843,6 +1891,7 @@ pages.watch = async (_arg, gen) => {
   let sparkData = {}, sparkError = "", held = new Set();
   let refreshSeq = 0;
   api("/api/portfolio").then(p => { if (navAlive(gen)) held = new Set(p.rows.map(r => r.symbol)); }).catch(() => {});
+  if (wl?.symbols.length) { wl.symbols.forEach(s => intradayAddSymbol(s)); intradayStart(); }
   async function loadSparks(thenRefresh = true) {
     if (!wl?.symbols.length) return;
     try {
@@ -1896,12 +1945,21 @@ pages.watch = async (_arg, gen) => {
       card.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); } };
       const cv = $("canvas", card);
       const sd = sparkData[s];
-      if (sd?.closes?.length >= 2) sparkline(cv, sd.closes, sd.base ?? null);
-      else if (sparkKind === "day" && sd) {
-        const c2 = cv.getContext("2d");
-        cv.width = cv.clientWidth; cv.height = cv.clientHeight;
-        c2.fillStyle = cssVar("--muted"); c2.font = "10px sans-serif";
-        c2.fillText("尚無當日分時", 4, cv.clientHeight / 2 + 3);
+      if (sparkKind === "day") {
+        const ipts = intradayGet(s);
+        if (ipts.length >= 2) {
+          const closes = ipts.map(p => p.p);
+          const q = sd || {};
+          sparkline(cv, closes, parseFloat(q.base) || null);
+        } else if (sd?.closes?.length >= 2) {
+          sparkline(cv, sd.closes, sd.base ?? null);
+        } else {
+          const c2 = cv.getContext("2d");
+          cv.width = cv.clientWidth; cv.height = cv.clientHeight;
+          c2.fillStyle = cssVar("--muted"); c2.font = "10px sans-serif";
+          c2.fillText("收集中…", 4, cv.clientHeight / 2 + 3);
+        }
+      } else if (sd?.closes?.length >= 2) { sparkline(cv, sd.closes, sd.base ?? null);
       } else if (sparkError) {
         const c2 = cv.getContext("2d");
         cv.width = cv.clientWidth; cv.height = cv.clientHeight;
