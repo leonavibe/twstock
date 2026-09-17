@@ -212,6 +212,10 @@ async function rankingsMovers(kind = "gainers", limit = 30) {
 }
 
 /* ===== 三大法人 ===== */
+const INST_LABELS = {
+  "Foreign_Investor": "外資", "Dealer_self": "自營商(自行)", "Dealer_Hedging": "自營商(避險)",
+  "Investment_Trust": "投信", "Foreign_Dealer_Self": "外資(自營)", "total": "合計",
+};
 async function institutional() {
   const start = localDateISO(new Date(Date.now() - 7 * 86400000));
   try {
@@ -219,7 +223,7 @@ async function institutional() {
     if (!data.length) return { items: [], total_buy: 0, total_sell: 0, inst_net: 0, date: "" };
     const latestDate = data.at(-1)?.date || "";
     const today = data.filter(d => d.date === latestDate);
-    const items = today.map(d => ({ label: d.name, buy: d.buy || 0, sell: d.sell || 0, net: (d.buy || 0) - (d.sell || 0) }));
+    const items = today.map(d => ({ label: INST_LABELS[d.name] || d.name, buy: d.buy || 0, sell: d.sell || 0, net: (d.buy || 0) - (d.sell || 0) }));
     const totalBuy = items.reduce((s, i) => s + i.buy, 0);
     const totalSell = items.reduce((s, i) => s + i.sell, 0);
     return { items, total_buy: totalBuy, total_sell: totalSell, inst_net: totalBuy - totalSell, date: latestDate };
@@ -1285,19 +1289,17 @@ function drawChart(canvas, tipEl, rows, mode = "line", events = [], opts = {}) {
     if (rsi) indTxt = rsi[i] === null ? "　RSI 資料不足" : `　RSI ${fmt(rsi[i], 1)}`;
     if (bias) indTxt = bias[i] === null ? "　乖離 資料不足" : `　乖離 ${fmt(bias[i], 2)}%`;
     if (boll && boll.up[i] !== null) indTxt += `　布林 ${fmt(boll.dn[i])}~${fmt(boll.up[i])}`;
-    tipEl.innerHTML = `<b>${esc(r.date)}</b><br>開 ${fmt(r.open)}　高 ${fmt(r.max)}　低 ${fmt(r.min)}　收 ${fmt(r.close)}<br>量 ${lots(r.Trading_Volume)} 張` +
-      (ma5[i] ? `　MA5 ${fmt(ma5[i])}` : "") + (ma20[i] ? `　MA20 ${fmt(ma20[i])}` : "") +
+    const html = `<b>${esc(r.date)}</b><br>開 ${fmt(r.open)}　高 ${fmt(r.max)}<br>低 ${fmt(r.min)}　收 ${fmt(r.close)}<br>量 ${lots(r.Trading_Volume)} 張` +
+      (ma5[i] ? `<br>MA5 ${fmt(ma5[i])}` : "") + (ma20[i] ? `　MA20 ${fmt(ma20[i])}` : "") +
       (indTxt ? `<br>${esc(indTxt.trim())}` : "") + (evTxt ? `<br>${esc(evTxt)}` : "");
-    const ft = $("#float-tip");
+    const ft = $(opts.floatId || "#float-tip");
     if (ft) {
       ft.style.display = "block";
-      ft.innerHTML = `<b>${esc(r.date)}</b><br>開 ${fmt(r.open)}　高 ${fmt(r.max)}<br>低 ${fmt(r.min)}　收 ${fmt(r.close)}<br>量 ${lots(r.Trading_Volume)} 張` +
-        (ma5[i] ? `<br>MA5 ${fmt(ma5[i])}` : "") + (ma20[i] ? `　MA20 ${fmt(ma20[i])}` : "") +
-        (indTxt ? `<br>${esc(indTxt.trim())}` : "") + (evTxt ? `<br>${esc(evTxt)}` : "");
-      ft.style.left = Math.min(x + 15, canvas.clientWidth - 180) + "px";
-      ft.style.top = "30px";
+      ft.innerHTML = html;
+      ft.style.left = Math.min(x + 15, canvas.clientWidth - ft.offsetWidth - 10) + "px";
+      ft.style.top = Math.max(0, Y(r.close) - ft.offsetHeight / 2) + "px";
     }
-  }, () => { base(); tipEl.innerHTML = "點按、滑動或用左右方向鍵查看每日開高低收<br>旗標＝事件（除息／法說／自訂）"; const ft = $("#float-tip"); if (ft) ft.style.display = "none"; }, rows.length, { left: pad.l, right: pad.r });
+  }, () => { base(); const ft = $(opts.floatId || "#float-tip"); if (ft) ft.style.display = "none"; }, rows.length, { left: pad.l, right: pad.r });
 }
 
 function drawIntraday(canvas, tipEl, pts, prevClose, floatEl) {
@@ -1417,8 +1419,7 @@ function drawIntraday(canvas, tipEl, pts, prevClose, floatEl) {
       ft.style.left = Math.min(x + 15, canvas.clientWidth - ft.offsetWidth - 10) + "px";
       ft.style.top = Math.max(0, Y(pts[i].p) - ft.offsetHeight / 2) + "px";
     }
-    if (tipEl) tipEl.innerHTML = html;
-  }, () => { base(); if (tipEl) tipEl.innerHTML = ""; if (ft) ft.style.display = "none"; }, pts.length, { left: pad.l, right: pad.r });
+  }, () => { base(); if (ft) ft.style.display = "none"; }, pts.length, { left: pad.l, right: pad.r });
 }
 
 function drawMulti(canvas, tipEl, seriesList) {
