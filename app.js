@@ -11,6 +11,13 @@ const setHTML = (sel, html, gen) => {
 };
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function stampTime(el) {
+  if (!el) return;
+  const ts = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  let badge = el.querySelector(".data-ts");
+  if (!badge) { badge = document.createElement("span"); badge.className = "data-ts"; const h = el.querySelector("h3,h4"); if (h) h.appendChild(badge); else el.prepend(badge); }
+  badge.textContent = ` 更新 ${ts}`;
+}
 const escUrl = u => /^https?:\/\//i.test(u || "") ? esc(u) : "#";
 const reportArtifactUrl = () => "";
 
@@ -90,10 +97,16 @@ async function misRealtime(sids) {
     const code = (it.c || "").toUpperCase();
     if (!code) continue;
     const z = it.z, y = it.y;
-    if ((z === undefined || z === "-" || z === "") && (y === undefined || y === "-" || y === "")) continue;
+    if ((z === undefined || z === "") && (y === undefined || y === "")) continue;
+    let price = z;
+    if (price === "-" || price === undefined) {
+      const tr = it.trade;
+      if (tr && tr.z && tr.z !== "-") price = tr.z;
+      else if (it.o && it.o !== "-") price = it.o;
+    }
     out[code] = {
-      name: it.n, price: it.z, prev_close: it.y, open: it.o, high: it.h, low: it.l,
-      limit_up: it.u, limit_down: it.w, time: it.t, volume: it.v,
+      name: it.n, price, prev_close: it.y, open: it.o, high: it.h, low: it.l,
+      limit_up: it.u, limit_down: it.w, time: it.t, volume: it.v, trade: it.trade,
     };
   }
   return out;
@@ -166,8 +179,9 @@ async function fetchNews(query, limit = 20) {
 
 /* ===== TWSE 全市場日行情（免費、免金鑰） ===== */
 let _twseAllCache = null, _twseAllTime = 0;
-async function twseAllStocks() {
-  if (_twseAllCache && Date.now() - _twseAllTime < 300000) return _twseAllCache;
+let _twseBaseRows = null, _twseBaseTime = 0;
+async function _twseBaseData() {
+  if (_twseBaseRows && Date.now() - _twseBaseTime < 600000) return _twseBaseRows;
   const url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL";
   const r = await fetch(PROXY(url));
   if (!r.ok) throw new Error("TWSE API error");
@@ -179,12 +193,39 @@ async function twseAllStocks() {
     const volume = parseInt(d.TradeVolume) || 0;
     if (!close || isNaN(close)) continue;
     const prev = close - change;
-    rows.push({
-      id: d.Code, name: d.Name || "",
-      close, change, pct: prev ? (change / prev) * 100 : 0,
-      volume, market: "上市", time: "",
-    });
+    rows.push({ id: d.Code, name: d.Name || "", close, change, pct: prev ? (change / prev) * 100 : 0, volume, market: "上市", time: "", prev_close: prev });
   }
+  _twseBaseRows = rows;
+  _twseBaseTime = Date.now();
+  return rows;
+}
+async function twseAllStocks() {
+  if (_twseAllCache && Date.now() - _twseAllTime < 60000) return _twseAllCache;
+  const base = await _twseBaseData();
+  const h = new Date().getHours(), m = new Date().getMinutes();
+  const isTradingHours = new Date().getDay() >= 1 && new Date().getDay() <= 5 && (h > 9 || (h === 9 && m >= 0)) && (h < 13 || (h === 13 && m <= 35));
+  if (!isTradingHours) { _twseAllCache = base; _twseAllTime = Date.now(); return base; }
+  const topByVol = [...base].sort((a, b) => b.volume - a.volume).slice(0, 200);
+  const ids = topByVol.map(r => r.id);
+  const liveMap = {};
+  for (let i = 0; i < ids.length; i += 55) {
+    try {
+      const batch = ids.slice(i, i + 55);
+      const quotes = await misRealtime(batch);
+      Object.assign(liveMap, quotes);
+    } catch {}
+  }
+  const now = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const rows = base.map(r => {
+    const q = liveMap[r.id] || liveMap[r.id.toUpperCase()];
+    if (!q) return r;
+    let px = parseFloat(q.price);
+    if (!px || isNaN(px)) { const tr = q.trade; px = tr ? parseFloat(tr.z) : null; }
+    if (!px || isNaN(px)) px = parseFloat(q.open) || parseFloat(q.high) || r.close;
+    const pv = parseFloat(q.prev_close) || r.prev_close || r.close - r.change;
+    const ch = px - pv;
+    return { ...r, close: px, change: ch, pct: pv ? (ch / pv) * 100 : 0, volume: parseInt(q.volume) || r.volume, time: q.time || now };
+  });
   _twseAllCache = rows;
   _twseAllTime = Date.now();
   return rows;
@@ -288,24 +329,27 @@ function intradayGet(sid) { return _intradayStore[sid.toUpperCase()] || []; }
 async function _intradayPoll() {
   if (!_intradaySymbols.size) return;
   const sids = [..._intradaySymbols];
-  try {
-    const quotes = await misRealtime(sids);
-    for (const sid of sids) {
-      const q = quotes[sid] || quotes[sid.toUpperCase()];
-      if (!q) continue;
-      const px = parseFloat(q.price);
-      if (!px || isNaN(px)) continue;
-      const t = q.time || "";
-      if (!t) continue;
-      const key = sid.toUpperCase();
-      if (!_intradayStore[key]) _intradayStore[key] = [];
-      const pts = _intradayStore[key];
-      if (!pts.length || pts[pts.length - 1].t !== t) {
-        pts.push({ t, p: px, v: parseInt(q.volume) || 0 });
-        if (pts.length > 500) pts.splice(0, pts.length - 500);
+  for (let i = 0; i < sids.length; i += 55) {
+    try {
+      const batch = sids.slice(i, i + 55);
+      const quotes = await misRealtime(batch);
+      for (const sid of batch) {
+        const q = quotes[sid] || quotes[sid.toUpperCase()];
+        if (!q) continue;
+        let px = parseFloat(q.price);
+        if (!px || isNaN(px)) continue;
+        const t = q.time || q.trade?.t || "";
+        if (!t) continue;
+        const key = sid.toUpperCase();
+        if (!_intradayStore[key]) _intradayStore[key] = [];
+        const pts = _intradayStore[key];
+        if (!pts.length || pts[pts.length - 1].t !== t) {
+          pts.push({ t, p: px, v: parseInt(q.volume) || 0 });
+          if (pts.length > 500) pts.splice(0, pts.length - 500);
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 }
 
 function intradayStart() {
@@ -1616,6 +1660,7 @@ pages.home = async (_arg, gen) => {
     renderCard("#idx-taiex", idx.taiex);
     renderCard("#idx-otc", idx.otc);
     renderCard("#idx-futures", idx.futures, "#idx-futures-title");
+    stampTime($("#home-idx-cards"));
   }).catch(() => {});
 
   // 事件
@@ -2090,6 +2135,8 @@ function renderLimits(data, upId, downId, gen) {
   const tbl = rows => rows.length ? `<div class="twrap" style="max-height:320px;overflow-y:auto"><table><tr><th>代號</th><th>名稱</th><th class="num-td">價格</th><th class="num-td">漲跌%</th><th class="num-td">量(張)</th></tr>` + rows.slice(0, 50).map(limitRow).join("") + "</table></div>" : "<div class='empty'>暫無資料</div>";
   setHTML(upId, tbl(data.limit_up || []), gen);
   setHTML(downId, tbl(data.limit_down || []), gen);
+  stampTime($(upId)?.closest(".card"));
+  stampTime($(downId)?.closest(".card"));
   $$(`${upId} tr.click, ${downId} tr.click`).forEach(tr => bindClickable(tr, () => show("stock", tr.dataset.s)));
 }
 
@@ -2154,6 +2201,7 @@ function renderInstitutional(targetId, gen, pageType) {
       `<div class="muted small" style="margin-top:8px">三大法人合計：<b class="${cls(d.inst_net)}">${d.inst_net >= 0 ? "買超" : "賣超"} ${B(Math.abs(d.inst_net || 0))} 億</b></div>`;
 
     $(targetId).innerHTML = `<div class="muted small" style="margin-bottom:8px">日期：${esc(d.date || "—")}</div>${sec1}${sec2}<div style="margin-top:12px">${sec3}</div>`;
+    stampTime($(targetId)?.closest(".card"));
   }).catch(() => setHTML(targetId, "<div class='empty'>法人資料載入失敗</div>", gen));
 }
 
@@ -2169,6 +2217,7 @@ function renderMovers(containerId, gen) {
           <td class="num-td">${fmt(r.close)}</td><td class="num-td ${cls(r.pct)}">${sign(r.pct)}%</td>
           <td class="num-td">${fmt(r.volume / 1000, 0)}</td></tr>`).join("") + "</table></div>" : "<div class='empty'>暫無資料</div>";
       $$(`${containerId}-tbl tr.click`).forEach(tr => bindClickable(tr, () => show("stock", tr.dataset.s)));
+      stampTime($(`${containerId}-tbl`)?.closest(".card"));
     } catch (e) { setHTML(`${containerId}-tbl`, `<div class='empty'>${esc(e.message)}</div>`, gen); }
   }
   btns.forEach(([id, k, label]) => {

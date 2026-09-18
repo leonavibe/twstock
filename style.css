@@ -350,3 +350,39 @@ label { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .calendar-list .cal-row { grid-template-columns: 1fr 1fr; }
   .calendar-list .cal-row .cal-detail { grid-column: span 2; }
 }
+
+/* data timestamp badges */
+.data-ts { font-weight: 400; font-size: 11px; color: var(--muted); margin-left: 6px; }
+
+/* RWD global: prevent horizontal overflow */
+body, main { overflow-x: hidden; max-width: 100vw; }
+.twrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Mobile small screen adjustments */
+@media (max-width: 480px) {
+  .card { padding: 12px 10px; }
+  .vchips { flex-wrap: wrap; }
+  .vchip { font-size: 11px; padding: 4px 8px; }
+  .stock-head { flex-wrap: wrap; gap: 4px; }
+  .ranges button { padding: 4px 8px; font-size: 12px; min-height: 30px; }
+  .mode-toggle button { font-size: 11px; padding: 3px 7px; }
+  .grid3 { gap: 8px; }
+  .idx-card { padding: 10px 6px; }
+  .idx-val div:first-child { font-size: 1.1rem !important; }
+  .idx-val div:nth-child(2) { font-size: 0.75rem !important; }
+  table { font-size: 12px; }
+  table th, table td { padding: 4px 5px; }
+  .news-row { font-size: 12px; }
+  .legend { font-size: 10px; flex-wrap: wrap; }
+  .qgrid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px; }
+  .qcard { padding: 10px 8px; }
+  .qcard .px { font-size: 1.1rem; }
+  .qcard .nm { font-size: 12px; }
+  .topbar { padding: 8px 10px; }
+  .topbar input { font-size: 13px; padding: 7px 8px; }
+  .logo { font-size: 15px; }
+}
+@media (max-width: 360px) {
+  .grid3 { grid-template-columns: 1fr !important; }
+  .qgrid { grid-template-columns: 1fr !important; }
+}
