@@ -260,12 +260,18 @@ async function institutional() {
     if (j.stat !== "OK" || !j.data?.length) return { items: [], total_buy: 0, total_sell: 0, inst_net: 0, date: "" };
     const pv = v => parseFloat((v || "0").replace(/,/g, "")) || 0;
     let dealerBuy = 0, dealerSell = 0, trustBuy = 0, trustSell = 0, foreignBuy = 0, foreignSell = 0;
+    let totalBuyAll = 0, totalSellAll = 0;
     for (const row of j.data) {
       const label = row[0] || "";
-      if (label.includes("自營商") && label.includes("自行")) { dealerBuy += pv(row[1]); dealerSell += pv(row[2]); }
-      else if (label.includes("自營商") && label.includes("避險")) { dealerBuy += pv(row[1]); dealerSell += pv(row[2]); }
-      else if (label.includes("投信")) { trustBuy = pv(row[1]); trustSell = pv(row[2]); }
-      else if (label.includes("外資") && !label.includes("自營商")) { foreignBuy += pv(row[1]); foreignSell += pv(row[2]); }
+      if (label.includes("自營商") && label.includes("自行")) {
+        dealerBuy = pv(row[1]); dealerSell = pv(row[2]);
+      } else if (label.includes("投信")) {
+        trustBuy = pv(row[1]); trustSell = pv(row[2]);
+      } else if (label.startsWith("外資") && label.includes("陸資")) {
+        foreignBuy = pv(row[1]); foreignSell = pv(row[2]);
+      } else if (label === "合計") {
+        totalBuyAll = pv(row[1]); totalSellAll = pv(row[2]);
+      }
     }
     const items = [
       { label: "自營商", buy: dealerBuy, sell: dealerSell, net: dealerBuy - dealerSell },
@@ -275,18 +281,22 @@ async function institutional() {
     const instBuy = items.reduce((s, i) => s + i.buy, 0);
     const instSell = items.reduce((s, i) => s + i.sell, 0);
     const instNet = instBuy - instSell;
-    // 散戶推估：全市場成交 - 三大法人
-    let retailNet = 0;
+    // 散戶推估：全市場成交金額 - 三大法人
+    let retailBuy = 0, retailSell = 0;
     try {
       const mr = await fetch(PROXY(`${TWSE_WEB}/rwd/zh/afterTrading/FMTQIK?response=json`));
       const mj = await mr.json();
       if (mj.stat === "OK" && mj.data?.length) {
         const lastRow = mj.data[mj.data.length - 1];
-        const totalVal = pv(lastRow[2]) || pv(lastRow[1]);
-        if (totalVal > 0) retailNet = -(instNet);
+        const mktTotal = pv(lastRow[2]);
+        if (mktTotal > 0) {
+          retailBuy = mktTotal - instBuy;
+          retailSell = mktTotal - instSell;
+        }
       }
     } catch {}
-    if (retailNet) items.push({ label: "散戶推估", buy: 0, sell: 0, net: retailNet });
+    const retailNet = retailBuy || retailSell ? retailBuy - retailSell : -(instNet);
+    items.push({ label: "散戶推估", buy: retailBuy, sell: retailSell, net: retailNet });
     const dateStr = j.date || "";
     const isoDate = dateStr.length === 8 ? `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}` : dateStr;
     return { items, total_buy: instBuy, total_sell: instSell, inst_net: instNet, date: isoDate };
@@ -396,7 +406,7 @@ async function _intradaySeed(sid) {
 function intradayStart() {
   if (_intradayTimer) return;
   _intradayPoll();
-  _intradayTimer = setInterval(_intradayPoll, 15000);
+  _intradayTimer = setInterval(_intradayPoll, 5000);
 }
 
 async function stockIntraday(sid) {
