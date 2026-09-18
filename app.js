@@ -318,7 +318,8 @@ async function shareholderMeetings() {
 
 /* ===== 當日分時資料 ===== */
 async function taiexIntraday() {
-  // 優先用瀏覽器累積器的即時數據
+  intradayAddSymbol("T00"); intradayStart();
+  await _intradaySeed("T00");
   const live = intradayGet("T00");
   if (live.length >= 2) return live;
   // 收盤後 fallback: MI_5MINS_INDEX（盤中不可用）
@@ -378,6 +379,20 @@ async function _intradayPoll() {
   }
 }
 
+async function _intradaySeed(sid) {
+  sid = sid.toUpperCase();
+  if ((_intradayStore[sid] || []).length >= 2) return;
+  try {
+    const q = (await misRealtime([sid]))[sid] || {};
+    const o = parseFloat(q.open), z = parseFloat(q.price), pv = parseFloat(q.prev_close);
+    const t = q.time || "";
+    if (!_intradayStore[sid]) _intradayStore[sid] = [];
+    const pts = _intradayStore[sid];
+    if (o && !isNaN(o) && !pts.some(p => p.t === "09:00:00")) pts.unshift({ t: "09:00:00", p: o, v: 0 });
+    if (z && !isNaN(z) && t && !pts.some(p => p.t === t)) pts.push({ t, p: z, v: parseInt(q.volume) || 0 });
+  } catch {}
+}
+
 function intradayStart() {
   if (_intradayTimer) return;
   _intradayPoll();
@@ -388,6 +403,7 @@ async function stockIntraday(sid) {
   sid = sid.toUpperCase();
   intradayAddSymbol(sid);
   intradayStart();
+  await _intradaySeed(sid);
   let pts = intradayGet(sid);
   if (pts.length >= 2) return pts;
   try {
