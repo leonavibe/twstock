@@ -253,21 +253,43 @@ async function rankingsMovers(kind = "gainers", limit = 30) {
 }
 
 /* ===== 三大法人 ===== */
-const INST_LABELS = {
-  "Foreign_Investor": "外資", "Dealer_self": "自營商(自行)", "Dealer_Hedging": "自營商(避險)",
-  "Investment_Trust": "投信", "Foreign_Dealer_Self": "外資(自營)", "total": "合計",
-};
 async function institutional() {
-  const start = localDateISO(new Date(Date.now() - 7 * 86400000));
   try {
-    const data = await finmind("TaiwanStockTotalInstitutionalInvestors", { start_date: start });
-    if (!data.length) return { items: [], total_buy: 0, total_sell: 0, inst_net: 0, date: "" };
-    const latestDate = data.at(-1)?.date || "";
-    const today = data.filter(d => d.date === latestDate);
-    const items = today.map(d => ({ label: INST_LABELS[d.name] || d.name, buy: d.buy || 0, sell: d.sell || 0, net: (d.buy || 0) - (d.sell || 0) }));
-    const totalBuy = items.reduce((s, i) => s + i.buy, 0);
-    const totalSell = items.reduce((s, i) => s + i.sell, 0);
-    return { items, total_buy: totalBuy, total_sell: totalSell, inst_net: totalBuy - totalSell, date: latestDate };
+    const r = await fetch(PROXY(`${TWSE_WEB}/rwd/zh/fund/BFI82U?response=json&dayDate=&type=day`));
+    const j = await r.json();
+    if (j.stat !== "OK" || !j.data?.length) return { items: [], total_buy: 0, total_sell: 0, inst_net: 0, date: "" };
+    const pv = v => parseFloat((v || "0").replace(/,/g, "")) || 0;
+    let dealerBuy = 0, dealerSell = 0, trustBuy = 0, trustSell = 0, foreignBuy = 0, foreignSell = 0;
+    for (const row of j.data) {
+      const label = row[0] || "";
+      if (label.includes("自營商") && label.includes("自行")) { dealerBuy += pv(row[1]); dealerSell += pv(row[2]); }
+      else if (label.includes("自營商") && label.includes("避險")) { dealerBuy += pv(row[1]); dealerSell += pv(row[2]); }
+      else if (label.includes("投信")) { trustBuy = pv(row[1]); trustSell = pv(row[2]); }
+      else if (label.includes("外資") && !label.includes("自營商")) { foreignBuy += pv(row[1]); foreignSell += pv(row[2]); }
+    }
+    const items = [
+      { label: "自營商", buy: dealerBuy, sell: dealerSell, net: dealerBuy - dealerSell },
+      { label: "投信", buy: trustBuy, sell: trustSell, net: trustBuy - trustSell },
+      { label: "外資", buy: foreignBuy, sell: foreignSell, net: foreignBuy - foreignSell },
+    ];
+    const instBuy = items.reduce((s, i) => s + i.buy, 0);
+    const instSell = items.reduce((s, i) => s + i.sell, 0);
+    const instNet = instBuy - instSell;
+    // 散戶推估：全市場成交 - 三大法人
+    let retailNet = 0;
+    try {
+      const mr = await fetch(PROXY(`${TWSE_WEB}/rwd/zh/afterTrading/FMTQIK?response=json`));
+      const mj = await mr.json();
+      if (mj.stat === "OK" && mj.data?.length) {
+        const lastRow = mj.data[mj.data.length - 1];
+        const totalVal = pv(lastRow[2]) || pv(lastRow[1]);
+        if (totalVal > 0) retailNet = -(instNet);
+      }
+    } catch {}
+    if (retailNet) items.push({ label: "散戶推估", buy: 0, sell: 0, net: retailNet });
+    const dateStr = j.date || "";
+    const isoDate = dateStr.length === 8 ? `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}` : dateStr;
+    return { items, total_buy: instBuy, total_sell: instSell, inst_net: instNet, date: isoDate };
   } catch { return { items: [], total_buy: 0, total_sell: 0, inst_net: 0, date: "" }; }
 }
 
@@ -296,12 +318,16 @@ async function shareholderMeetings() {
 
 /* ===== 當日分時資料 ===== */
 async function taiexIntraday() {
+  // 優先用瀏覽器累積器的即時數據
+  const live = intradayGet("T00");
+  if (live.length >= 2) return live;
+  // 收盤後 fallback: MI_5MINS_INDEX（盤中不可用）
   const today = new Date();
   const dateStr = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}`;
   try {
     const r = await fetch(PROXY(`https://www.twse.com.tw/exchangeReport/MI_5MINS_INDEX?response=json&date=${dateStr}`));
     const j = await r.json();
-    if (j.stat !== "OK" || !j.data || !j.data.length) return [];
+    if (j.stat !== "OK" || !j.data || !j.data.length) return live;
     const pts = [];
     for (let i = 0; i < j.data.length; i += 12) {
       const row = j.data[i];
@@ -315,7 +341,7 @@ async function taiexIntraday() {
       if (!isNaN(p)) pts.push({ t: last[0], p, v: 0 });
     }
     return pts;
-  } catch { return []; }
+  } catch { return live; }
 }
 
 /* ===== 瀏覽器端分時累積器（模擬本機版 scheduler） ===== */
